@@ -1,143 +1,110 @@
-const RunsView = {
-  async render() {
+const RunsView = (() => {
+  let page = 0, status = '';
+  const LIMIT = 50;
+
+  async function render() {
     const el = document.getElementById('view-runs');
     el.innerHTML = `
-      <div class="page-header">
-        <div>
-          <div class="page-title">Runs</div>
-          <div class="page-sub">verification queue</div>
+      <div class="ph">
+        <div><span class="ph-title">Runs</span><span class="ph-sub">pipeline builds</span></div>
+        <div class="ph-act"><button class="btn sm" onclick="RunsView.render()">↻</button></div>
+      </div>
+      <div class="tbl-wrap">
+        <div class="toolbar">
+          <select id="run-st" onchange="RunsView.setStatus(this.value)">
+            <option value="">All</option>
+            <option value="PENDING">PENDING</option>
+            <option value="BUILDING">BUILDING</option>
+            <option value="VERIFIED">VERIFIED</option>
+            <option value="NOT_REPRODUCIBLE">NOT_REPRODUCIBLE</option>
+            <option value="NOT_REPRODUCIBLE_CRITICAL">NR_CRITICAL</option>
+            <option value="BUILD_FAILED">BUILD_FAILED</option>
+            <option value="UNVERIFIABLE">UNVERIFIABLE</option>
+          </select>
+          <span class="toolbar-right" id="run-cnt"></span>
         </div>
-        <button class="btn" onclick="RunsView.render()">↻ Refresh</button>
-      </div>
+        <table>
+          <thead><tr><th>Package</th><th>Version</th><th>Arch</th><th>Status</th><th>Queued</th><th>Duration</th><th>Trigger</th></tr></thead>
+          <tbody id="run-body"><tr><td colspan="7" class="state">${UI.spin()}</td></tr></tbody>
+        </table>
+        <div class="pager" id="run-pager"></div>
+      </div>`;
+    document.getElementById('run-st').value = status;
+    await load();
+  }
 
-      <div class="section-title" style="margin-top:0">Next Pending</div>
-      <div id="runs-pending">${UI.spinner()}</div>
+  function setStatus(v) { status = v; page = 0; load(); }
 
-      <div class="section-title">Lookup Run by ID</div>
-      <div class="row-gap">
-        <input type="text" id="run-id-input" placeholder="UUID…" style="flex:1;max-width:400px" />
-        <button class="btn btn-primary" onclick="RunsView.lookup()">Look up</button>
-      </div>
-    `;
-    await this.loadPending();
-  },
+  async function load() {
+    const tbody = document.getElementById('run-body');
+    if (!tbody) return;
+    tbody.innerHTML = `<tr><td colspan="7" class="state">${UI.spin()}</td></tr>`;
+    let q = `?limit=${LIMIT}&offset=${page * LIMIT}`;
+    if (status) q += `&status=${status}`;
+    try {
+      const rows = await API.runs(q);
+      const cnt = document.getElementById('run-cnt');
+      if (cnt) cnt.textContent = `${rows.length} runs`;
+      if (!rows.length) { tbody.innerHTML = `<tr><td colspan="7" class="state">No runs</td></tr>`; _pager(0); return; }
+      tbody.innerHTML = rows.map(r => `
+        <tr class="cl" onclick="RunsView.modal('${r.id}')">
+          <td class="td-n">${r.package_name}</td>
+          <td class="mono">${r.version}</td>
+          <td class="mono">${r.arch}</td>
+          <td>${UI.badge(r.status)}</td>
+          <td class="mono">${UI.time(r.queued_at)}</td>
+          <td class="mono">${UI.dur(r.build_duration_seconds)}</td>
+          <td class="mono muted">${r.triggered_by}</td>
+        </tr>`).join('');
+      _pager(rows.length);
+    } catch (e) { tbody.innerHTML = `<tr><td colspan="7" class="state err">${e.message}</td></tr>`; }
+  }
 
-  async loadPending() {
-    const el = document.getElementById('runs-pending');
+  function _pager(count) {
+    const el = document.getElementById('run-pager');
     if (!el) return;
+    el.innerHTML = `
+      <button class="btn sm" onclick="RunsView.prev()" ${page > 0 ? '' : 'disabled'}>← Prev</button>
+      <span>p.${page + 1}</span>
+      <button class="btn sm" onclick="RunsView.next()" ${count === LIMIT ? '' : 'disabled'}>Next →</button>`;
+  }
+
+  async function modal(id) {
+    UI.modal(`<div class="m-title">Run</div>${UI.spin()}`);
     try {
-      const run = await API.pendingRun();
-      if (!run) {
-        el.innerHTML = UI.empty('Queue is empty');
-        return;
-      }
-      el.innerHTML = `
-        <div class="table-wrap" style="margin-bottom:20px">
-          <table>
-            <thead><tr><th>ID</th><th>Package</th><th>Version</th><th>Arch</th><th>Status</th><th>Queued</th><th>Actions</th></tr></thead>
-            <tbody>
-              <tr>
-                <td class="mono">${run.id.slice(0, 8)}…</td>
-                <td class="td-name">${run.package_name}</td>
-                <td class="mono">${run.version}</td>
-                <td class="mono">${run.arch}</td>
-                <td>${UI.badge(run.status)}</td>
-                <td>${UI.time(run.queued_at)}</td>
-                <td class="row-gap-sm">
-                  <button class="btn btn-sm" onclick="RunsView.openModal('${run.id}')">Details</button>
-                  ${run.status === 'PENDING' ? `
-                    <button class="btn btn-sm btn-primary" onclick="RunsView.startRun('${run.id}')">▶ Mark BUILDING</button>
-                  ` : ''}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="hint">▶ Mark BUILDING — переводит статус PENDING → BUILDING в БД. Реальную сборку запускает внешний builder-сервис, который поллит /runs/pending.</div>
-      `;
-    } catch (e) {
-      el.innerHTML = UI.err(e.message);
-    }
-  },
-
-  async startRun(id) {
-    try {
-      await API.startRun(id);
-      UI.toast('Статус → BUILDING', 'ok');
-      this.loadPending();
-    } catch (e) {
-      UI.toast(e.message, 'err');
-    }
-  },
-
-  async lookup() {
-    const id = document.getElementById('run-id-input').value.trim();
-    if (!id) return;
-    this.openModal(id);
-  },
-
-  async openModal(id) {
-    UI.modal(`<div class="modal-title">Run Details</div>${UI.spinner()}`);
-    try {
-      const run = await API.run(id);
-      const matchCls = run.hashes_match === true ? 'match' : run.hashes_match === false ? 'mismatch' : '';
-
+      const r = await API.run(id);
+      const mc = r.hashes_match === true ? 'ok' : r.hashes_match === false ? 'no' : '';
       UI.modal(`
-        <div class="modal-title">
-          ${run.package_name}
-          <span class="muted"> · ${run.version} / ${run.arch}</span>
-          ${UI.badge(run.status)}
+        <div class="m-title">${r.package_name} <span class="muted">· ${r.version}/${r.arch}</span> ${UI.badge(r.status)}</div>
+        <div class="dg">
+          <div class="dr"><div class="dl">Run ID</div><div class="dv mono">${r.id}</div></div>
+          <div class="dr"><div class="dl">Trigger</div><div class="dv mono">${r.triggered_by}</div></div>
+          <div class="dr"><div class="dl">Queued</div><div class="dv">${UI.time(r.queued_at)}</div></div>
+          <div class="dr"><div class="dl">Started</div><div class="dv">${UI.time(r.started_at)}</div></div>
+          <div class="dr"><div class="dl">Finished</div><div class="dv">${UI.time(r.finished_at)}</div></div>
+          <div class="dr"><div class="dl">Duration</div><div class="dv mono">${UI.dur(r.build_duration_seconds)}</div></div>
+          ${r.source_date_epoch ? `<div class="dr"><div class="dl">SDE</div><div class="dv mono">${r.source_date_epoch}</div></div>` : ''}
+          ${r.failure_reason ? `<div class="dr full"><div class="dl">Failure</div><div class="dv red">${r.failure_reason}</div></div>` : ''}
         </div>
-
-        <div class="detail-grid">
-          <div class="detail-row"><div class="detail-label">Run ID</div><div class="detail-val mono small">${run.id}</div></div>
-          <div class="detail-row"><div class="detail-label">Triggered by</div><div class="detail-val mono">${run.triggered_by}</div></div>
-          <div class="detail-row"><div class="detail-label">Queued</div><div class="detail-val">${UI.time(run.queued_at)}</div></div>
-          <div class="detail-row"><div class="detail-label">Started</div><div class="detail-val">${UI.time(run.started_at)}</div></div>
-          <div class="detail-row"><div class="detail-label">Finished</div><div class="detail-val">${UI.time(run.finished_at)}</div></div>
-          <div class="detail-row"><div class="detail-label">Duration</div><div class="detail-val mono">${UI.duration(run.build_duration_seconds)}</div></div>
-          ${run.build_path ? `<div class="detail-row"><div class="detail-label">Build Path</div><div class="detail-val mono">${run.build_path}</div></div>` : ''}
-          ${run.source_date_epoch ? `<div class="detail-row"><div class="detail-label">SOURCE_DATE_EPOCH</div><div class="detail-val mono">${run.source_date_epoch}</div></div>` : ''}
-          ${run.failure_reason ? `<div class="detail-row full-col"><div class="detail-label">Failure Reason</div><div class="detail-val red">${run.failure_reason}</div></div>` : ''}
+        <div class="sec">Hashes</div>
+        <div class="hc">
+          <div class="hbox ${mc}"><div class="hl">Declared</div><div class="hv">${r.hash_declared_at_run || '—'}</div></div>
+          <div class="hbox ${mc}"><div class="hl">Rebuilt</div><div class="hv">${r.hash_rebuilt || '—'}</div></div>
         </div>
-
-        <div class="section-title">Hash Comparison</div>
-        <div class="hash-compare">
-          <div class="hash-box ${matchCls}">
-            <div class="hash-label">Declared (D) — from mirror</div>
-            <div class="hash-val mono">${run.hash_declared_at_run || '—'}</div>
-          </div>
-          <div class="hash-box ${matchCls}">
-            <div class="hash-label">Rebuilt (R) — by builder</div>
-            <div class="hash-val mono">${run.hash_rebuilt || 'not yet'}</div>
-          </div>
-        </div>
-        ${run.hashes_match !== null ? `
-          <div class="hash-verdict ${run.hashes_match ? 'green' : 'red'}">
-            ${run.hashes_match ? '✓ Hashes match — REPRODUCIBLE' : '✕ Hashes differ — NOT REPRODUCIBLE'}
-          </div>
-        ` : ''}
-
-        ${run.diffs && run.diffs.length ? `
-          <div class="section-title">Diffs (${run.diffs.length})</div>
-          ${run.diffs.map(d => `
-            <div class="diff-item">
-              ${UI.severityBadge(d.severity)}
-              <div class="diff-body">
-                <div class="diff-name mono">${d.file_path || '—'} ${d.section_name ? `<span class="accent">· ${d.section_name}</span>` : ''}</div>
-                <div class="diff-cause">${d.cause}${d.description ? ' · ' + d.description : ''}</div>
+        ${r.hashes_match !== null ? `<div class="hverdict ${r.hashes_match ? 'green' : 'red'}">${r.hashes_match ? '✓ match' : '✕ mismatch'}</div>` : ''}
+        ${r.diffs?.length ? `
+          <div class="sec">Diffs (${r.diffs.length})</div>
+          ${r.diffs.map(d => `
+            <div class="diff">
+              ${UI.badge(d.severity)}
+              <div class="diff-b">
+                <div class="diff-f">${d.file_path || '—'}${d.section_name ? ` <span class="ac">· ${d.section_name}</span>` : ''}</div>
+                <div class="diff-c">${d.cause}${d.description ? ' · ' + d.description : ''}</div>
               </div>
-            </div>
-          `).join('')}
-        ` : ''}
+            </div>`).join('')}` : ''}
+        ${r.build_log ? `<div class="sec">Log</div><pre class="log">${r.build_log.replace(/</g, '&lt;')}</pre>` : ''}`);
+    } catch (e) { UI.modal(`<div class="m-title">Run</div>${UI.err(e.message)}`); }
+  }
 
-        ${run.build_log ? `
-          <div class="section-title">Build Log</div>
-          <pre class="log-box">${run.build_log.replace(/</g, '&lt;')}</pre>
-        ` : ''}
-      `);
-    } catch (e) {
-      UI.modal(`<div class="modal-title">Run Details</div>${UI.err(e.message)}`);
-    }
-  },
-};
+  return { render, setStatus, prev: () => { if (page > 0) { page--; load(); } }, next: () => { page++; load(); }, modal };
+})();

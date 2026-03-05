@@ -8,18 +8,14 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
-
-
-
-
 class VerificationStatus(str, Enum):
-    PENDING                    = "PENDING"
-    BUILDING                   = "BUILDING"
-    VERIFIED                   = "VERIFIED"
-    NOT_REPRODUCIBLE           = "NOT_REPRODUCIBLE"
-    NOT_REPRODUCIBLE_CRITICAL  = "NOT_REPRODUCIBLE_CRITICAL"
-    UNVERIFIABLE               = "UNVERIFIABLE"
-    BUILD_FAILED               = "BUILD_FAILED"
+    PENDING                   = "PENDING"
+    BUILDING                  = "BUILDING"
+    VERIFIED                  = "VERIFIED"
+    NOT_REPRODUCIBLE          = "NOT_REPRODUCIBLE"
+    NOT_REPRODUCIBLE_CRITICAL = "NOT_REPRODUCIBLE_CRITICAL"
+    UNVERIFIABLE              = "UNVERIFIABLE"
+    BUILD_FAILED              = "BUILD_FAILED"
 
 
 class DiffCause(str, Enum):
@@ -40,9 +36,7 @@ class DiffSeverity(str, Enum):
     CRITICAL = "CRITICAL"
 
 
-
-
-
+# ─── Mirror ───────────────────────────────────────────────────────────────────
 
 class MirrorOut(BaseModel):
     id: int
@@ -53,10 +47,6 @@ class MirrorOut(BaseModel):
     gpg_key_fingerprint: str | None
     is_active: bool
     created_at: datetime
-
-
-
-
 
 
 class MirrorSyncCreate(BaseModel):
@@ -80,31 +70,20 @@ class MirrorSyncOut(BaseModel):
     error_message: str | None
 
 
-
-
-
-
-class PackageOut(BaseModel):
-    id: int
-    name: str
-    source_name: str | None
-    created_at: datetime
-
-
-
-
-
+# ─── Packages ─────────────────────────────────────────────────────────────────
 
 class PackageVersionCreate(BaseModel):
+    name: str                                        # binary package name
+    source_name: str | None = None                   # source package name if different
     version: str
     arch: str
     filename: str
     size_bytes: int | None = None
     hash_declared: str = Field(..., min_length=64, max_length=64)
+    hash_download: str | None = Field(default=None, min_length=64, max_length=64)
     depends: str | None = None
     section: str | None = None
     priority: str | None = None
-    source_name: str | None = None
     discovered_in_sync_id: int | None = None
 
 
@@ -112,11 +91,14 @@ class PackageVersionOut(BaseModel):
     id: int
     package_id: int
     package_name: str
+    source_name: str | None
     version: str
     arch: str
     filename: str
     size_bytes: int | None
     hash_declared: str
+    hash_download: str | None
+    mirror_ok: bool | None
     depends: str | None
     section: str | None
     priority: str | None
@@ -124,9 +106,7 @@ class PackageVersionOut(BaseModel):
     last_seen_at: datetime
 
 
-
-
-
+# ─── Snapshots ────────────────────────────────────────────────────────────────
 
 class SnapshotCreate(BaseModel):
     git_commit_sha: str = Field(..., min_length=40, max_length=40)
@@ -145,9 +125,7 @@ class SnapshotOut(BaseModel):
     created_at: datetime
 
 
-
-
-
+# ─── Build environments ───────────────────────────────────────────────────────
 
 class BuildEnvOut(BaseModel):
     id: int
@@ -160,9 +138,7 @@ class BuildEnvOut(BaseModel):
     created_at: datetime
 
 
-
-
-
+# ─── Runs ─────────────────────────────────────────────────────────────────────
 
 class RunCreate(BaseModel):
     package_version_id: int
@@ -176,7 +152,6 @@ class BuilderResultSubmit(BaseModel):
         default=None,
         min_length=64,
         max_length=64,
-        description="SHA256 NULL если сборка не удалась.",
     )
     build_log: str | None = None
     failure_reason: str | None = None
@@ -211,9 +186,7 @@ class RunDetail(RunOut):
     diffs: list[DiffResultOut] = []
 
 
-
-
-
+# ─── Diffs ────────────────────────────────────────────────────────────────────
 
 class DiffResultCreate(BaseModel):
     file_path: str | None = None
@@ -235,9 +208,7 @@ class DiffResultOut(BaseModel):
     created_at: datetime
 
 
-
-
-
+# ─── Stats ────────────────────────────────────────────────────────────────────
 
 class StatusStat(BaseModel):
     status: VerificationStatus
@@ -278,7 +249,6 @@ class SnapshotStatsOut(BaseModel):
     failed: int
     pending: int
     building: int
-
 
 
 RunDetail.model_rebuild()

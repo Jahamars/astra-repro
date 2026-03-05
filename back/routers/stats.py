@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 import asyncpg
 
@@ -16,11 +18,8 @@ from models.schemas import (
 router = APIRouter(tags=["stats & infra"])
 
 
-
-
 @router.get("/stats", response_model=StatsOut)
 async def get_stats(conn: asyncpg.Connection = Depends(get_conn)):
-    
     totals = await conn.fetchrow(
         """
         SELECT
@@ -29,19 +28,13 @@ async def get_stats(conn: asyncpg.Connection = Depends(get_conn)):
             (SELECT COUNT(*) FROM verification_runs) AS total_runs
         """
     )
-
     status_rows = await conn.fetch("SELECT * FROM v_status_stats")
-
     return StatsOut(
         total_packages=totals["total_packages"],
         total_versions=totals["total_versions"],
         total_runs=totals["total_runs"],
         by_status=[
-            StatusStat(
-                status=r["status"],
-                total=r["total"],
-                percentage=float(r["percentage"]),
-            )
+            StatusStat(status=r["status"], total=r["total"], percentage=float(r["percentage"]))
             for r in status_rows
         ],
     )
@@ -56,15 +49,10 @@ async def get_critical_issues(
     if severity:
         rows = await conn.fetch(
             "SELECT * FROM v_critical_issues WHERE severity = $1 LIMIT $2",
-            severity,
-            limit,
+            severity, limit,
         )
     else:
-        rows = await conn.fetch(
-            "SELECT * FROM v_critical_issues LIMIT $1",
-            limit,
-        )
-
+        rows = await conn.fetch("SELECT * FROM v_critical_issues LIMIT $1", limit)
     return [CriticalIssueOut(**dict(r)) for r in rows]
 
 
@@ -73,15 +61,23 @@ async def get_snapshot_stats(
     limit: int = Query(default=20, le=100),
     conn: asyncpg.Connection = Depends(get_conn),
 ):
-    rows = await conn.fetch(
-        "SELECT * FROM v_snapshot_runs LIMIT $1",
-        limit,
-    )
+    rows = await conn.fetch("SELECT * FROM v_snapshot_runs LIMIT $1", limit)
     return [SnapshotStatsOut(**dict(r)) for r in rows]
 
 
-
-
+@router.get("/stats/mirror", response_model=dict)
+async def get_mirror_stats(conn: asyncpg.Connection = Depends(get_conn)):
+    row = await conn.fetchrow(
+        """
+        SELECT
+            COUNT(*)                                        AS total_versions,
+            COUNT(*) FILTER (WHERE mirror_ok = TRUE)       AS mirror_ok,
+            COUNT(*) FILTER (WHERE mirror_ok = FALSE)      AS mirror_tampered,
+            COUNT(*) FILTER (WHERE mirror_ok IS NULL)      AS mirror_unchecked
+        FROM package_versions
+        """
+    )
+    return dict(row)
 
 
 @router.get("/mirror/syncs", response_model=list[MirrorSyncOut])
@@ -90,12 +86,7 @@ async def list_syncs(
     conn: asyncpg.Connection = Depends(get_conn),
 ):
     rows = await conn.fetch(
-        """
-        SELECT * FROM mirror_sync_log
-        ORDER BY synced_at DESC
-        LIMIT $1
-        """,
-        limit,
+        "SELECT * FROM mirror_sync_log ORDER BY synced_at DESC LIMIT $1", limit
     )
     return [MirrorSyncOut(**dict(r)) for r in rows]
 
@@ -105,10 +96,7 @@ async def create_sync(
     body: MirrorSyncCreate,
     conn: asyncpg.Connection = Depends(get_conn),
 ):
-    
-    mirror = await conn.fetchrow(
-        "SELECT id FROM mirror WHERE is_active = TRUE LIMIT 1"
-    )
+    mirror = await conn.fetchrow("SELECT id FROM mirror WHERE is_active = TRUE LIMIT 1")
     if mirror is None:
         raise HTTPException(status_code=404, detail="No active mirror configured")
 
@@ -131,34 +119,22 @@ async def create_sync(
     return MirrorSyncOut(**dict(row))
 
 
-
-
-
-
 @router.post("/snapshots", response_model=SnapshotOut, status_code=201)
 async def create_snapshot(
     body: SnapshotCreate,
     conn: asyncpg.Connection = Depends(get_conn),
 ):
-    
-
     existing = await conn.fetchrow(
         """
-        SELECT id, git_commit_sha, git_ref, file_path,
-               package_names, created_at
+        SELECT id, git_commit_sha, git_ref, file_path, package_names, created_at
         FROM package_list_snapshots
         WHERE git_commit_sha = $1 AND file_path = $2
         """,
-        body.git_commit_sha,
-        body.file_path,
+        body.git_commit_sha, body.file_path,
     )
     if existing:
-        return SnapshotOut(
-            **dict(existing),
-            package_names=list(existing["package_names"]),
-        )
+        return SnapshotOut(**dict(existing), package_names=list(existing["package_names"]))
 
-    import json
     row = await conn.fetchrow(
         """
         INSERT INTO package_list_snapshots
@@ -172,10 +148,7 @@ async def create_snapshot(
         body.raw_content,
         json.dumps(body.package_names),
     )
-    return SnapshotOut(
-        **dict(row),
-        package_names=list(row["package_names"]),
-    )
+    return SnapshotOut(**dict(row), package_names=list(row["package_names"]))
 
 
 @router.get("/snapshots/{snapshot_id}/runs", response_model=list[dict])
@@ -198,7 +171,7 @@ async def get_snapshot_runs(
                p.name AS package_name, pv.version, pv.arch
         FROM verification_runs vr
         JOIN package_versions pv ON pv.id = vr.package_version_id
-        JOIN packages p ON p.id = pv.package_id
+        JOIN packages p          ON p.id  = pv.package_id
         WHERE vr.snapshot_id = $1
         ORDER BY vr.queued_at
         """,

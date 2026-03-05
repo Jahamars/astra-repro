@@ -1,47 +1,47 @@
-const VIEWS = {
-  dashboard: { el: 'view-dashboard', render: () => Dashboard.render() },
-  packages:  { el: 'view-packages',  render: () => PackagesView.render() },
-  runs:      { el: 'view-runs',      render: () => RunsView.render() },
-  issues:    { el: 'view-issues',    render: () => IssuesView.render() },
-  mirror:    { el: 'view-mirror',    render: () => MirrorView.render() },
-};
+const App = (() => {
+  const VIEWS = {
+    dashboard: { el: 'view-dashboard', mod: () => Dashboard },
+    packages:  { el: 'view-packages',  mod: () => PackagesView },
+    runs:      { el: 'view-runs',      mod: () => RunsView },
+    issues:    { el: 'view-issues',    mod: () => IssuesView },
+  };
 
-function navigate(name) {
-  if (!VIEWS[name]) return;
-  Object.keys(VIEWS).forEach(k => {
-    document.getElementById(VIEWS[k].el).classList.toggle('hidden', k !== name);
-  });
-  document.querySelectorAll('.nav-link').forEach(a => {
-    a.classList.toggle('active', a.dataset.view === name);
-  });
-  VIEWS[name].render();
-}
+  let _hTimer;
 
-async function checkHealth() {
-  const dot = document.getElementById('api-status');
-  try {
-    await API.health();
-    dot.className = 'status-dot ok';
-  } catch {
-    dot.className = 'status-dot err';
+  function navigate(name) {
+    if (!VIEWS[name]) return;
+    for (const [k, v] of Object.entries(VIEWS))
+      document.getElementById(v.el).classList.toggle('hidden', k !== name);
+    document.querySelectorAll('.nav-link').forEach(a =>
+      a.classList.toggle('active', a.dataset.view === name));
+    VIEWS[name].mod().render();
   }
-}
 
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('api-url-display').textContent =
-    API.base.replace(/https?:\/\//, '');
+  async function health() {
+    const dot = document.getElementById('api-dot');
+    try { await API.health(); dot.className = 'dot ok'; }
+    catch { dot.className = 'dot err'; }
+  }
 
-  document.querySelectorAll('.nav-link').forEach(a => {
-    a.addEventListener('click', e => { e.preventDefault(); navigate(a.dataset.view); });
-  });
+  function init() {
+    document.getElementById('api-url').textContent =
+      (localStorage.getItem('repro_api') || ENV.API_URL).replace(/https?:\/\//, '');
 
-  document.getElementById('modal-close').addEventListener('click', UI.closeModal);
-  document.getElementById('modal-overlay').addEventListener('click', e => {
-    if (e.target.id === 'modal-overlay') UI.closeModal();
-  });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') UI.closeModal(); });
+    document.querySelectorAll('.nav-link').forEach(a =>
+      a.addEventListener('click', e => { e.preventDefault(); navigate(a.dataset.view); }));
 
-  checkHealth();
-  setInterval(checkHealth, 30000);
-  navigate('dashboard');
-});
+    document.getElementById('modal-close').addEventListener('click', UI.closeModal);
+    document.getElementById('modal-overlay').addEventListener('click', e => {
+      if (e.target.id === 'modal-overlay') UI.closeModal();
+    });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') UI.closeModal(); });
+
+    health();
+    _hTimer = setInterval(health, 30_000);
+    navigate('dashboard');
+  }
+
+  return { init, navigate };
+})();
+
+document.addEventListener('DOMContentLoaded', App.init);

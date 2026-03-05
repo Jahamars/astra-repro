@@ -1,60 +1,52 @@
-const UI = {
-  badge(status) {
-    if (!status) return '<span class="badge badge-PENDING">—</span>';
-    const labels = {
-      NOT_REPRODUCIBLE_CRITICAL: 'NR·CRIT',
-      NOT_REPRODUCIBLE: 'NR',
-      BUILD_FAILED: 'FAILED',
-    };
-    return `<span class="badge badge-${status}">${labels[status] || status}</span>`;
-  },
+const UI = (() => {
+  const STATUS_LABEL = {
+    NOT_REPRODUCIBLE_CRITICAL: 'NR·CRIT',
+    NOT_REPRODUCIBLE:          'NR',
+    BUILD_FAILED:              'FAILED',
+  };
 
-  severityBadge(s) {
-    return `<span class="badge badge-${s}">${s}</span>`;
-  },
+  let _toastTimer;
 
-  time(ts) {
-    if (!ts) return '—';
-    return new Date(ts).toLocaleString();
-  },
+  return {
+    badge(s) {
+      if (!s) return `<span class="badge pending">—</span>`;
+      return `<span class="badge ${s.toLowerCase()}">${STATUS_LABEL[s] || s}</span>`;
+    },
 
-  duration(sec) {
-    if (sec == null) return '—';
-    if (sec < 60) return `${sec}s`;
-    return `${Math.floor(sec / 60)}m ${sec % 60}s`;
-  },
+    time(ts) {
+      if (!ts) return '—';
+      return new Date(ts).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
+    },
 
-  hash(h, len = 10) {
-    if (!h) return '—';
-    return `<span title="${h}">${h.slice(0, len)}…</span>`;
-  },
+    dur(sec) {
+      if (sec == null) return '—';
+      return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${sec % 60}s`;
+    },
 
-  toast(msg, type = 'info', dur = 2800) {
-    const el = document.getElementById('toast');
-    el.textContent = msg;
-    el.className = `toast show toast-${type}`;
-    clearTimeout(UI._tt);
-    UI._tt = setTimeout(() => el.classList.remove('show'), dur);
-  },
+    hash(h, n = 10) {
+      if (!h) return '—';
+      return `<span class="hash" title="${h}">${h.slice(0, n)}…</span>`;
+    },
 
-  modal(html) {
-    document.getElementById('modal-body').innerHTML = html;
-    document.getElementById('modal-overlay').classList.remove('hidden');
-  },
+    toast(msg, type = 'ok') {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = `toast show ${type}`;
+      clearTimeout(_toastTimer);
+      _toastTimer = setTimeout(() => el.className = 'toast', 2500);
+    },
 
-  closeModal() {
-    document.getElementById('modal-overlay').classList.add('hidden');
-  },
+    modal(html) {
+      document.getElementById('modal-body').innerHTML = html;
+      document.getElementById('modal-overlay').classList.remove('hidden');
+    },
 
-  spinner() {
-    return '<span class="spinner"></span>';
-  },
+    closeModal() {
+      document.getElementById('modal-overlay').classList.add('hidden');
+    },
 
-  err(msg) {
-    return `<div class="empty err">${msg}</div>`;
-  },
-
-  empty(msg = 'No data') {
-    return `<div class="empty">${msg}</div>`;
-  },
-};
+    spin() { return '<span class="spin"></span>'; },
+    err(msg) { return `<div class="state err">${msg}</div>`; },
+    empty(msg = 'No data') { return `<div class="state">${msg}</div>`; },
+  };
+})();
