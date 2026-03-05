@@ -1,0 +1,151 @@
+variables:
+  API_URL: "http://192.168.0.101:8000"
+  DEBIAN_IMAGE: "192.168.56.20:5050/root/debci/debian:stable"
+
+stages:
+  - mirror-check
+  - build
+  - report
+
+.base:
+  image: $DEBIAN_IMAGE
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends curl jq python3 dpkg-dev fakeroot 2>/dev/null
+    - curl -sf --max-time 5 "$API_URL/health" > /dev/null || { echo "API unavailable"; exit 1; }
+
+mirror-check:
+  extends: .base
+  stage: mirror-check
+  script:
+    - |
+      FAIL=0
+      while IFS= read -r PKG; do
+        [ -z "$PKG" ] || [ "${PKG#\#}" != "$PKG" ] && continue
+
+        INFO=$(apt-cache show "$PKG" 2>/dev/null)
+        HASH_REPO=$(echo "$INFO" | awk '/^SHA256:/{print $2; exit}')
+        VERSION=$(echo   "$INFO" | awk '/^Version:/{print $2; exit}')
+        [ -n "$HASH_REPO" ] || { echo "[$PKG] not found in repo"; FAIL=1; continue; }
+
+        mkdir -p /tmp/dl && cd /tmp/dl && rm -f ./*.deb
+        apt-get download "$PKG" -qq 2>/dev/null
+        DEB=$(ls *.deb 2>/dev/null | head -1)
+        [ -n "$DEB" ] || { echo "[$PKG] download failed"; FAIL=1; continue; }
+        HASH_DL=$(sha256sum "$DEB" | awk '{print $1}')
+
+        if [ "$HASH_REPO" = "$HASH_DL" ]; then
+          echo "[$PKG $VERSION] mirror: OK"
+        else
+          echo "[$PKG $VERSION] mirror: TAMPERED repo=$HASH_REPO dl=$HASH_DL"
+          FAIL=1
+        fi
+      done < "$CI_PROJECT_DIR/packages.txt"
+      exit $FAIL
+
+repro-build:
+  extends: .base
+  stage: build
+  needs: [mirror-check]
+  script:
+    - |
+      grep '^deb ' /etc/apt/sources.list \
+        | sed 's/^deb /deb-src /' >> /etc/apt/sources.list 2>/dev/null || true
+      apt-get update -qq
+
+      OVERALL=0
+
+      while IFS= read -r PKG_NAME; do
+        [ -z "$PKG_NAME" ] || [ "${PKG_NAME#\#}" != "$PKG_NAME" ] && continue
+
+        echo ""
+        echo "──────────────────────────────────────"
+        echo "PKG: $PKG_NAME"
+
+        INFO=$(apt-cache show "$PKG_NAME" 2>/dev/null)
+        VERSION=$(echo  "$INFO" | awk '/^Version:/{print $2; exit}')
+        ARCH=$(echo     "$INFO" | awk '/^Architecture:/{print $2; exit}')
+        FILENAME=$(echo "$INFO" | awk '/^Filename:/{print $2; exit}')
+        HASH_REPO=$(echo "$INFO"| awk '/^SHA256:/{print $2; exit}')
+
+        if [ -z "$VERSION" ] || [ -z "$HASH_REPO" ]; then
+          echo "[$PKG_NAME] not found — skip"
+          continue
+        fi
+
+        PV=$(curl -sf -X POST "$API_URL/packages/versions" \
+          -H 'Content-Type: application/json' \
+          -d "{\"version\":\"$VERSION\",\"arch\":\"$ARCH\",\"filename\":\"$FILENAME\",\"hash_declared\":\"$HASH_REPO\",\"source_name\":\"$PKG_NAME\"}")
+        PV_ID=$(echo "$PV" | jq -r '.id // empty')
+        [ -n "$PV_ID" ] || { echo "PV_ID missing: $PV"; OVERALL=1; continue; }
+
+        RUN=$(curl -sf -X POST "$API_URL/runs" \
+          -H 'Content-Type: application/json' \
+          -d "{\"package_version_id\":$PV_ID,\"triggered_by\":\"gitlab-ci\"}")
+        RUN_ID=$(echo "$RUN" | jq -r '.id // empty')
+        [ -z "$RUN_ID" ] && \
+          RUN_ID=$(echo "$RUN" | jq -r '.detail // ""' | grep -oE '[0-9a-f-]{36}' | head -1)
+        [ -n "$RUN_ID" ] || { echo "RUN_ID missing: $RUN"; OVERALL=1; continue; }
+
+        curl -sf -X PUT "$API_URL/runs/$RUN_ID/start" \
+          -H 'Content-Type: application/json' > /dev/null
+
+        HASH_BUILT="" FAILURE="" BUILD_LOG=""
+        rm -rf /tmp/build && mkdir -p /tmp/build && cd /tmp/build
+
+        if apt-get source "$PKG_NAME" -qq 2>/tmp/src.log; then
+          SRC=$(find /tmp/build -maxdepth 1 -mindepth 1 -type d | head -1)
+          if [ -n "$SRC" ]; then
+            cd "$SRC"
+            apt-get build-dep -y . -qq 2>/dev/null || true
+            BUILD_LOG=$(dpkg-buildpackage -b -uc -us 2>&1) || true
+            BUILT=$(ls /tmp/build/*.deb 2>/dev/null | head -1)
+            if [ -n "$BUILT" ]; then
+              HASH_BUILT=$(sha256sum "$BUILT" | awk '{print $1}')
+            else
+              FAILURE="no .deb produced"
+            fi
+          else
+            FAILURE="source dir not found"
+          fi
+        else
+          FAILURE="apt-get source failed: $(tr '\n' ' ' < /tmp/src.log)"
+        fi
+
+        H=$([ -n "$HASH_BUILT" ] && echo "\"$HASH_BUILT\"" || echo "null")
+        F=$([ -n "$FAILURE"    ] && python3 -c "import sys,json;print(json.dumps('$FAILURE'))" || echo "null")
+        L=$(echo "$BUILD_LOG" | head -c 4000 \
+            | python3 -c "import sys,json;print(json.dumps(sys.stdin.read()))")
+
+        RESULT=$(curl -sf -X POST "$API_URL/runs/$RUN_ID/result" \
+          -H 'Content-Type: application/json' \
+          -d "{\"hash_rebuilt\":$H,\"build_log\":$L,\"failure_reason\":$F,\"build_path\":\"/tmp/build\"}")
+        STATUS=$(echo "$RESULT" | jq -r '.status // "UNKNOWN"')
+
+        echo "declared : $HASH_REPO"
+        echo "built    : ${HASH_BUILT:--}"
+        echo "status   : $STATUS"
+        [ -n "$HASH_BUILT" ] && {
+          [ "$HASH_REPO" = "$HASH_BUILT" ] && echo "✓ REPRODUCIBLE" || { echo "✗ NOT REPRODUCIBLE"; OVERALL=1; }
+        } || echo "~ build: $FAILURE"
+
+      done < "$CI_PROJECT_DIR/packages.txt"
+
+      exit $OVERALL
+  allow_failure: true
+
+report:
+  extends: .base
+  stage: report
+  needs: [repro-build]
+  when: always
+  script:
+    - |
+      echo "=== Reproducibility Report ==="
+      curl -sf "$API_URL/stats" | jq '.by_status[] | "\(.status): \(.total) (\(.percentage)%)"' -r
+      echo ""
+      echo "=== Critical Issues ==="
+      curl -sf "$API_URL/stats/issues?severity=CRITICAL&limit=20" \
+        | jq '.[] | "\(.package_name) \(.version) \(.arch) — \(.cause) \(.file_path // "")"' -r \
+        || echo "none"
+

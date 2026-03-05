@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Repro Builds</title>
+  <link rel="stylesheet" href="src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <nav id="sidebar">
+      <div class="logo">
+        <span class="logo-icon">⬡</span>
+        <span class="logo-text">repro</span>
+      </div>
+      <ul class="nav-links">
+        <li><a href="#" class="nav-link active" data-view="dashboard">Dashboard</a></li>
+        <li><a href="#" class="nav-link" data-view="packages">Packages</a></li>
+        <li><a href="#" class="nav-link" data-view="runs">Runs</a></li>
+        <li><a href="#" class="nav-link" data-view="issues">Issues</a></li>
+        <li><a href="#" class="nav-link" data-view="mirror">Mirror</a></li>
+      </ul>
+      <div class="sidebar-footer">
+        <span id="api-status" class="status-dot"></span>
+        <span id="api-url-display"></span>
+      </div>
+    </nav>
+
+    <main id="content">
+      <div id="view-dashboard" class="view"></div>
+      <div id="view-packages" class="view hidden"></div>
+      <div id="view-runs"     class="view hidden"></div>
+      <div id="view-issues"   class="view hidden"></div>
+      <div id="view-mirror"   class="view hidden"></div>
+    </main>
+  </div>
+
+  <div id="modal-overlay" class="hidden">
+    <div id="modal">
+      <button id="modal-close">✕</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <!-- env config — единственное место где меняется API_URL -->
+  <script src="config.js"></script>
+  <script src="src/api.js"></script>
+  <script src="src/ui.js"></script>
+  <script src="src/views/dashboard.js"></script>
+  <script src="src/views/packages.js"></script>
+  <script src="src/views/runs.js"></script>
+  <script src="src/views/issues.js"></script>
+  <script src="src/views/mirror.js"></script>
+  <script src="src/app.js"></script>
+</body>
+</html>
